@@ -4,6 +4,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 /// Raw mono audio clips
 use color_eyre::eyre::{Result, eyre};
 use cpal::{ChannelCount, FromSample, Sample, StreamConfig, Device, SampleFormat, Stream};
+use dasp::{signal, Signal};
+use dasp::interpolate::linear::Linear;
 
 #[derive(Debug, Clone)]
 pub struct AudioClip {
@@ -56,9 +58,21 @@ impl AudioClip {
         println!("Playing audio clip");
         // Setup output device
         let (device, config) = setup_audio_device(false)?;
+        
+        // Get the output device sample rate
+        let output_sample_rate = config.sample_rate().0 as u32;
+        
+        // Resample the audio clip to match the output device sample rate
+        let resampled_clip = self.resample(output_sample_rate)?;
+        println!("Resampled from {}Hz to {}Hz", self.sample_rate, output_sample_rate);
+
+        // Calculate playback duration based on sample count and sample rate
+        let playback_duration = std::time::Duration::from_secs_f32(
+            resampled_clip.samples.len() as f32 / resampled_clip.sample_rate as f32
+        );
 
         println!("Beginning playback");
-        let clip = Arc::new(Mutex::new(Some(self.clone())));
+        let clip = Arc::new(Mutex::new(Some(resampled_clip)));
         let clip2 = clip.clone();
 
         let channels = config.channels();
@@ -77,11 +91,6 @@ impl AudioClip {
 
         stream.play()?;
         
-        // Calculate playback duration based on sample count and sample rate
-        let playback_duration = std::time::Duration::from_secs_f32(
-            self.samples.len() as f32 / self.sample_rate as f32
-        );
-        
         // Add a small buffer to ensure all audio is played
         let buffer_duration = std::time::Duration::from_millis(500);
         
@@ -90,6 +99,25 @@ impl AudioClip {
         println!("Playback complete");
 
         Ok(())
+    }
+
+    fn resample(&self, sample_rate: u32) -> Result<AudioClip> {
+        if self.sample_rate == sample_rate {
+            return Ok(self.clone());
+        }
+
+        let mut signal = signal::from_iter(self.samples.iter().cloned());
+        let a = signal.next();
+        let b = signal.next();
+        let linear_interpolation = Linear::new(a, b);
+       let samples = signal.from_hz_to_hz(linear_interpolation, self.sample_rate as f64, sample_rate as f64)
+            .take(self.samples.len() * (sample_rate as usize / self.sample_rate as usize)).collect();
+
+        Ok(AudioClip {
+            samples,
+            sample_rate,
+            playback_position: 0,
+        })
     }
 }
 
