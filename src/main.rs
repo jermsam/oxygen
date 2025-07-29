@@ -45,6 +45,7 @@ fn main() -> Result<()> {
             println!("Record command with name: {}", name.as_ref().map_or("default", |s| s));
             let _name = name.as_ref().unwrap_or(&"default".to_string());
             let _audio_clip = AudioClip::record().unwrap();
+            _audio_clip.play().unwrap();
             
         }
         Commands::List {} => {

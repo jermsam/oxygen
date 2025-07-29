@@ -5,9 +5,11 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use color_eyre::eyre::{Result, eyre};
 use cpal::{ChannelCount, FromSample, Sample};
 
+#[derive(Debug, Clone)]
 pub struct AudioClip {
     samples: Vec<f32>,
-    sample_rate: u32 // 48khz and
+    sample_rate: u32, // 48khz and
+    playback_position: usize, // Track playback position
 }
 
 impl AudioClip {
@@ -20,7 +22,8 @@ impl AudioClip {
         let samples = Vec::new();
         let audio_clip = AudioClip {
             samples,
-            sample_rate
+            sample_rate,
+            playback_position: 0,
         };
         println!("Beginning recording");
         let clip = Arc::new(Mutex::new(Some(audio_clip)));
@@ -68,6 +71,66 @@ impl AudioClip {
         println!("Recording length: {} seconds", clip.samples.len() as f32 / clip.sample_rate as f32);
         Ok(clip)
     }
+    pub fn play(&self) -> Result<()> {
+        println!("Playing audio clip");
+        let host = cpal::default_host();
+        let device = host.default_output_device().ok_or(eyre!("No output device available"))?;
+        println!("Default output device: {:?}", device.name());
+        let config = device.default_output_config()?;
+
+        println!("Beginning playback");
+        let clip = Arc::new(Mutex::new(Some(self.clone())));
+        let clip2 = clip.clone();
+
+        let err_fn = move |err| {
+            eprintln!("an error occurred on stream: {}", err);
+        };
+
+        let channels = config.channels();
+
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => device.build_output_stream(
+                &config.into(),
+                move |data, _: &_| write_output_data::<f32>(data, channels, &clip2),
+                err_fn,
+                None,
+            )?,
+            cpal::SampleFormat::I16 => device.build_output_stream(
+                &config.into(),
+                move |data, _: &_|  write_output_data::<i16>(data, channels, &clip2),
+                err_fn,
+                None,
+            )?,
+            cpal::SampleFormat::U16 => device.build_output_stream(
+                &config.into(),
+                move |data, _: &_|  write_output_data::<u16>(data, channels, &clip2),
+                err_fn,
+                None,
+            )?,
+            _ => device.build_output_stream(
+                &config.into(),
+                move |data, _: &_| write_output_data::<f32>(data, channels, &clip2),
+                err_fn,
+                None,
+            )?,
+        };
+
+        stream.play()?;
+        
+        // Calculate playback duration based on sample count and sample rate
+        let playback_duration = std::time::Duration::from_secs_f32(
+            self.samples.len() as f32 / self.sample_rate as f32
+        );
+        
+        // Add a small buffer to ensure all audio is played
+        let buffer_duration = std::time::Duration::from_millis(500);
+        
+        println!("Playback duration: {:?}", playback_duration);
+        std::thread::sleep(playback_duration + buffer_duration);
+        println!("Playback complete");
+
+        Ok(())
+    }
 }
 
 type ClipHandle = Arc<Mutex<Option<AudioClip>>>;
@@ -80,6 +143,32 @@ where
         if let Some(clip) = guard.as_mut() {
             for frame in input.chunks(channels.into()) {
                clip.samples.push(f32::from_sample(frame[0]));
+            }
+        }
+    }
+}
+
+fn write_output_data<T>(output: &mut[T], channels: ChannelCount, writer: &ClipHandle)
+where
+    T: Sample + FromSample<f32>,
+{
+    if let Ok(mut guard) = writer.try_lock() {
+        if let Some(clip) = guard.as_mut() {
+            for frame in output.chunks_mut(channels as usize) {
+                // Get the next sample from our recording (mono)
+                let next_sample = if clip.playback_position < clip.samples.len() {
+                    let sample_value = clip.samples[clip.playback_position];
+                    clip.playback_position += 1;
+                    sample_value
+                } else {
+                    // If we run out of samples, use silence
+                    0.0
+                };
+                
+                // Apply the same mono sample to all channels (typically left and right for stereo)
+                for sample in frame.iter_mut() {
+                    *sample = T::from_sample(next_sample);
+                }
             }
         }
     }
