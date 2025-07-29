@@ -3,7 +3,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 /// Raw mono audio clips
 use color_eyre::eyre::{Result, eyre};
-use cpal::{ChannelCount, FromSample, Sample};
+use cpal::{ChannelCount, FromSample, Sample, StreamConfig, Device, SampleFormat, Stream};
 
 #[derive(Debug, Clone)]
 pub struct AudioClip {
@@ -13,12 +13,11 @@ pub struct AudioClip {
 }
 
 impl AudioClip {
-    pub fn record() -> Result<AudioClip>{
-        let host = cpal::default_host();
-        let device = host.default_input_device().ok_or(eyre!("No input device available"))?;
-        println!("Default input device: {:?}", device.name());
-        let config = device.default_input_config()?;
+    pub fn record() -> Result<AudioClip> {
+        // Setup input device
+        let (device, config) = setup_audio_device(true)?;
         let sample_rate = config.sample_rate().0 as u32;
+        
         let samples = Vec::new();
         let audio_clip = AudioClip {
             samples,
@@ -29,38 +28,19 @@ impl AudioClip {
         let clip = Arc::new(Mutex::new(Some(audio_clip)));
         let clip2 = clip.clone();
 
-        let err_fn = move |err| {
-            eprintln!("an error occurred on stream: {}", err);
-        };
-
         let channels = config.channels();
+        let sample_format = config.sample_format();
+        let stream_config = config.into();
 
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => device.build_input_stream(
-                &config.into(),
-                move |data, _: &_| write_input_data::<f32>(data, channels, &clip2),
-                err_fn,
-                None,
-            )?,
-            cpal::SampleFormat::I16 => device.build_input_stream(
-                &config.into(),
-                move |data, _: &_|  write_input_data::<i16>(data, channels, &clip2),
-                err_fn,
-                None,
-            )?,
-            cpal::SampleFormat::U16 => device.build_input_stream(
-                &config.into(),
-                move |data, _: &_|  write_input_data::<u16>(data, channels, &clip2),
-                err_fn,
-                None,
-            )?,
-            _ => device.build_input_stream(
-                &config.into(),
-                move |data, _: &_| write_input_data::<f32>(data, channels, &clip2),
-                err_fn,
-                None,
-            )?,
-        };
+        // Build input stream
+        let stream = build_audio_stream(
+            &device, 
+            &stream_config, 
+            channels, 
+            &clip2, 
+            true,
+            sample_format,
+        )?;
 
         stream.play()?;
         // let recording go for roughly three seconds
@@ -71,49 +51,29 @@ impl AudioClip {
         println!("Recording length: {} seconds", clip.samples.len() as f32 / clip.sample_rate as f32);
         Ok(clip)
     }
+    
     pub fn play(&self) -> Result<()> {
         println!("Playing audio clip");
-        let host = cpal::default_host();
-        let device = host.default_output_device().ok_or(eyre!("No output device available"))?;
-        println!("Default output device: {:?}", device.name());
-        let config = device.default_output_config()?;
+        // Setup output device
+        let (device, config) = setup_audio_device(false)?;
 
         println!("Beginning playback");
         let clip = Arc::new(Mutex::new(Some(self.clone())));
         let clip2 = clip.clone();
 
-        let err_fn = move |err| {
-            eprintln!("an error occurred on stream: {}", err);
-        };
-
         let channels = config.channels();
+        let sample_format = config.sample_format();
+        let stream_config = config.into();
 
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => device.build_output_stream(
-                &config.into(),
-                move |data, _: &_| write_output_data::<f32>(data, channels, &clip2),
-                err_fn,
-                None,
-            )?,
-            cpal::SampleFormat::I16 => device.build_output_stream(
-                &config.into(),
-                move |data, _: &_|  write_output_data::<i16>(data, channels, &clip2),
-                err_fn,
-                None,
-            )?,
-            cpal::SampleFormat::U16 => device.build_output_stream(
-                &config.into(),
-                move |data, _: &_|  write_output_data::<u16>(data, channels, &clip2),
-                err_fn,
-                None,
-            )?,
-            _ => device.build_output_stream(
-                &config.into(),
-                move |data, _: &_| write_output_data::<f32>(data, channels, &clip2),
-                err_fn,
-                None,
-            )?,
-        };
+        // Build output stream
+        let stream = build_audio_stream(
+            &device, 
+            &stream_config, 
+            channels, 
+            &clip2, 
+            false,
+            sample_format,
+        )?;
 
         stream.play()?;
         
@@ -131,6 +91,120 @@ impl AudioClip {
 
         Ok(())
     }
+}
+
+// Common function to set up audio device
+fn setup_audio_device(is_input: bool) -> Result<(Device, cpal::SupportedStreamConfig)> {
+    let host = cpal::default_host();
+    let device = if is_input {
+        host.default_input_device().ok_or(eyre!("No input device available"))?
+    } else {
+        host.default_output_device().ok_or(eyre!("No output device available"))?
+    };
+    
+    let device_type = if is_input { "input" } else { "output" };
+    println!("Default {} device: {:?}", device_type, device.name());
+    
+    let config = if is_input {
+        device.default_input_config()?
+    } else {
+        device.default_output_config()?
+    };
+    
+    Ok((device, config))
+}
+
+// Common error function
+fn create_error_fn() -> impl FnMut(cpal::StreamError) + Send + 'static {
+    |err| {
+        eprintln!("an error occurred on stream: {}", err);
+    }
+}
+
+// Build audio stream based on sample format
+fn build_audio_stream(
+    device: &Device,
+    config: &StreamConfig,
+    channels: ChannelCount,
+    clip: &ClipHandle,
+    is_input: bool,
+    sample_format: SampleFormat,
+) -> Result<Stream> {
+    let err_fn = create_error_fn();
+    let clip = clip.clone();
+    
+    let stream = match sample_format {
+        SampleFormat::F32 => {
+            if is_input {
+                device.build_input_stream(
+                    config,
+                    move |data, _: &_| write_input_data::<f32>(data, channels, &clip),
+                    err_fn,
+                    None,
+                )?
+            } else {
+                device.build_output_stream(
+                    config,
+                    move |data, _: &_| write_output_data::<f32>(data, channels, &clip),
+                    err_fn,
+                    None,
+                )?
+            }
+        },
+        SampleFormat::I16 => {
+            if is_input {
+                device.build_input_stream(
+                    config,
+                    move |data, _: &_| write_input_data::<i16>(data, channels, &clip),
+                    err_fn,
+                    None,
+                )?
+            } else {
+                device.build_output_stream(
+                    config,
+                    move |data, _: &_| write_output_data::<i16>(data, channels, &clip),
+                    err_fn,
+                    None,
+                )?
+            }
+        },
+        SampleFormat::U16 => {
+            if is_input {
+                device.build_input_stream(
+                    config,
+                    move |data, _: &_| write_input_data::<u16>(data, channels, &clip),
+                    err_fn,
+                    None,
+                )?
+            } else {
+                device.build_output_stream(
+                    config,
+                    move |data, _: &_| write_output_data::<u16>(data, channels, &clip),
+                    err_fn,
+                    None,
+                )?
+            }
+        },
+        _ => {
+            if is_input {
+                device.build_input_stream(
+                    config,
+                    move |data, _: &_| write_input_data::<f32>(data, channels, &clip),
+                    err_fn,
+                    None,
+                )?
+            } else {
+                device.build_output_stream(
+                    config,
+                    move |data, _: &_| write_output_data::<f32>(data, channels, &clip),
+                    err_fn,
+                    None,
+                )?
+            }
+        },
+    };
+    
+    Ok(stream)
 }
 
 type ClipHandle = Arc<Mutex<Option<AudioClip>>>;
