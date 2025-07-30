@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use chrono::{DateTime, Utc};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 /// Raw mono audio clips
@@ -9,19 +10,25 @@ use dasp::interpolate::linear::Linear;
 
 #[derive(Debug, Clone)]
 pub struct AudioClip {
-    samples: Vec<f32>,
-    sample_rate: u32, // 48khz and
-    playback_position: usize, // Track playback position
+   pub id: Option<usize>,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+    pub samples: Vec<f32>,
+    pub sample_rate: u32, // 48khz and
+    pub playback_position: usize, // Track playback position
 }
 
 impl AudioClip {
-    pub fn record() -> Result<AudioClip> {
+    pub fn record(name: String) -> Result<AudioClip> {
         // Setup input device
         let (device, config) = setup_audio_device(true)?;
         let sample_rate = config.sample_rate().0 as u32;
         
         let samples = Vec::new();
         let audio_clip = AudioClip {
+            id: None,
+            name,
+            created_at: Utc::now(),
             samples,
             sample_rate,
             playback_position: 0,
@@ -114,6 +121,9 @@ impl AudioClip {
             .take(self.samples.len() * (sample_rate as usize / self.sample_rate as usize)).collect();
 
         Ok(AudioClip {
+            id: self.id,
+            name: self.name.clone(),
+            created_at: self.created_at,
             samples,
             sample_rate,
             playback_position: 0,

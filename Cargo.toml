@@ -11,3 +11,6 @@ color-eyre = "0.6.5"
 cpal = "0.16.0"
 anyhow = "1.0.98"
 dasp = { version = "0.11.0", features = ["interpolate", "interpolate-linear", "signal"] }
+rusqlite = { version = "0.37.0", features = ["chrono"] }
+chrono = "0.4.41"
+byteorder = "1.5.0"

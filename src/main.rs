@@ -1,5 +1,7 @@
 mod audio_clips;
+mod db;
 
+use chrono::Local;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
 use audio_clips::AudioClip;
@@ -39,19 +41,21 @@ enum Commands {
 fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
-    
+    let db = db::Db::open("oxygen.db")?;
     match &cli.command {
         Commands::Record { name } => {
             println!("Record command with name: {}", name.as_ref().map_or("default", |s| s));
-            let _name = name.as_ref().unwrap_or(&"default".to_string());
-            let _audio_clip = AudioClip::record().unwrap();
-            _audio_clip.play().unwrap();
+            let name = name.clone().unwrap_or_else(|| Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+            let mut audio_clip = AudioClip::record(name)?;
+            db.save(&mut audio_clip).unwrap();
             
         }
         Commands::List {} => {
             println!("List command");
         }
         Commands::Play { name } => {
+            let audio_clip = db.load(name)?;
+            audio_clip.play()?;
             println!("Play command with name: {}", name);
         }
         Commands::Delete { name } => {
