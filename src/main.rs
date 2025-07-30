@@ -44,11 +44,9 @@ fn main() -> Result<()> {
     let db = db::Db::open("oxygen.db")?;
     match &cli.command {
         Commands::Record { name } => {
-            println!("Record command with name: {}", name.as_ref().map_or("default", |s| s));
             let name = name.clone().unwrap_or_else(|| Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
             let mut audio_clip = AudioClip::record(name)?;
-            db.save(&mut audio_clip).unwrap();
-            
+            db.save(&mut audio_clip)?;
         }
         Commands::List {} => {
             println!("List command");
@@ -56,7 +54,6 @@ fn main() -> Result<()> {
         Commands::Play { name } => {
             let audio_clip = db.load(name)?;
             audio_clip.play()?;
-            println!("Play command with name: {}", name);
         }
         Commands::Delete { name } => {
             println!("Delete command with name: {}", name);

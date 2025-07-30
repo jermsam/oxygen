@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, types::ToSql};
+use rusqlite::{params, Connection};
 /// Raw mono audio clips
 use color_eyre::eyre::Result;
 use crate::audio_clips::AudioClip;
