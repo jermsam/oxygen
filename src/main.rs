@@ -49,14 +49,18 @@ fn main() -> Result<()> {
             db.save(&mut audio_clip)?;
         }
         Commands::List {} => {
-            println!("List command");
+            let audio_clips = db.list()?;
+            for audio_clip in audio_clips {
+                println!("{} {} {} {} ",  audio_clip.name, audio_clip.created_at, audio_clip.sample_rate, audio_clip.playback_position);
+            }
         }
         Commands::Play { name } => {
             let audio_clip = db.load(name)?;
             audio_clip.play()?;
         }
         Commands::Delete { name } => {
-            println!("Delete command with name: {}", name);
+            db.delete(name)?;
+            println!("Deleted clip '{}' successfully.", name);
         }
     }   
     

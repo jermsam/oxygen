@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::sync::atomic::{AtomicBool, Ordering};
+use ctrlc;
 
 /// Raw mono audio clips
 use color_eyre::eyre::{Result, eyre};
@@ -34,6 +36,8 @@ impl AudioClip {
             playback_position: 0,
         };
         println!("Beginning recording");
+        println!("Press Ctrl+C to stop recording");
+        
         let clip = Arc::new(Mutex::new(Some(audio_clip)));
         let clip2 = clip.clone();
 
@@ -51,12 +55,24 @@ impl AudioClip {
             sample_format,
         )?;
 
+        // Set up Ctrl+C handler
+        let recording = Arc::new(AtomicBool::new(true));
+        let recording_for_handler = recording.clone();
+        
+        ctrlc::set_handler(move || {
+            recording_for_handler.store(false, Ordering::SeqCst);
+        })?;
+
         stream.play()?;
-        // let recording go for roughly three seconds
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        
+        // Wait for Ctrl+C
+        while recording.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        
         drop(stream);
         let clip = clip.lock().unwrap().take().unwrap();
-        println!("Finished recording");
+        println!("\nFinished recording");
         println!("Recording length: {} seconds", clip.samples.len() as f32 / clip.sample_rate as f32);
         Ok(clip)
     }

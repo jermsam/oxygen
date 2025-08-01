@@ -71,7 +71,43 @@ impl Db {
         })?;
         
         Ok(audio_clip)
-    }   
+    }  
+    
+    pub fn list(&self) -> Result<Vec<AudioClip>> {
+        let mut stmt = self.0.prepare("SELECT * FROM audio_clips ORDER BY created_at DESC")?;
+        let rows = stmt.query_map([], |row| {
+            let id: usize = row.get(0)?;
+            let name: String = row.get(1)?;
+            let created_at: String = row.get(2)?;
+            let sample_rate: u32 = row.get(3)?;
+            let playback_position: u32 = row.get(4)?;
+            let samples_blob: Vec<u8> = row.get(5)?;
+            
+            let samples = blob_to_f32_vec(&samples_blob).unwrap();
+            let created_at = created_at.parse().unwrap();
+            
+            Ok(AudioClip {
+                id: Some(id),
+                name,
+                created_at,
+                samples,
+                sample_rate,
+                playback_position: playback_position as usize,
+            })
+        })?;
+        
+        let mut audio_clips = Vec::new();
+        for clip in rows {
+            audio_clips.push(clip?);
+        }
+        
+        Ok(audio_clips)
+    }
+
+    pub fn delete(&self, name: &str) -> Result<()> {
+        self.0.execute("DELETE FROM audio_clips WHERE name = ?", params![name])?;
+        Ok(())
+    }
 }
 
 // Helper function to convert Vec<f32> to a blob (Vec<u8>) for storage
